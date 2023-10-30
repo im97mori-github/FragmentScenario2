@@ -17,6 +17,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import org.im97mori.test.android.FragmentScenario2.Companion.launch
+import org.im97mori.test.android.NestedFragmentScenario2.Companion.launch
 import java.io.Closeable
 
 /**
@@ -31,13 +32,13 @@ import java.io.Closeable
  * [DESTROYED][Lifecycle.State.DESTROYED] will result in an [IllegalArgumentException].
  * @param factory a fragment factory to use or null to use default factory
  */
-public inline fun <reified F : Fragment, reified A : FragmentActivity> launchFragment(
+public inline fun <reified F : Fragment, reified A : FragmentActivity, reified P : Fragment> launchNestedFragment(
     fragmentArgs: Bundle? = null,
     @StyleRes themeResId: Int = R.style.FragmentScenarioEmptyFragmentActivityTheme,
     initialState: Lifecycle.State = Lifecycle.State.RESUMED,
     factory: FragmentFactory? = null
-): FragmentScenario2<F, A> = launch(
-    F::class.java, fragmentArgs, A::class.java, themeResId, initialState, factory
+): NestedFragmentScenario2<F, A, P> = NestedFragmentScenario2.launch(
+    F::class.java, fragmentArgs, A::class.java, P::class.java, themeResId, initialState, factory
 )
 
 /**
@@ -52,13 +53,13 @@ public inline fun <reified F : Fragment, reified A : FragmentActivity> launchFra
  * [DESTROYED][Lifecycle.State.DESTROYED] will result in an [IllegalArgumentException].
  * @param instantiate method which will be used to instantiate the Fragment.
  */
-public inline fun <reified F : Fragment, reified A : FragmentActivity> launchFragment(
+public inline fun <reified F : Fragment, reified A : FragmentActivity, reified P : Fragment> launchNestedFragment(
     fragmentArgs: Bundle? = null,
     @StyleRes themeResId: Int = R.style.FragmentScenarioEmptyFragmentActivityTheme,
     initialState: Lifecycle.State = Lifecycle.State.RESUMED,
     crossinline instantiate: () -> F
-): FragmentScenario2<F, A> = launch(
-    F::class.java, fragmentArgs, A::class.java, themeResId, initialState,
+): NestedFragmentScenario2<F, A, P> = NestedFragmentScenario2.launch(
+    F::class.java, fragmentArgs, A::class.java, P::class.java, themeResId, initialState,
     object : FragmentFactory() {
         override fun instantiate(
             classLoader: ClassLoader,
@@ -82,13 +83,13 @@ public inline fun <reified F : Fragment, reified A : FragmentActivity> launchFra
  * [DESTROYED][Lifecycle.State.DESTROYED] will result in an [IllegalArgumentException].
  * @param factory a fragment factory to use or null to use default factory
  */
-public inline fun <reified F : Fragment, reified A : FragmentActivity> launchFragmentInContainer(
+public inline fun <reified F : Fragment, reified A : FragmentActivity, reified P : Fragment> launchNestedFragmentInContainer(
     fragmentArgs: Bundle? = null,
     @StyleRes themeResId: Int = R.style.FragmentScenarioEmptyFragmentActivityTheme,
     initialState: Lifecycle.State = Lifecycle.State.RESUMED,
     factory: FragmentFactory? = null
-): FragmentScenario2<F, A> = FragmentScenario2.launchInContainer(
-    F::class.java, fragmentArgs, A::class.java, themeResId, initialState, factory
+): NestedFragmentScenario2<F, A, P> = NestedFragmentScenario2.launchInContainer(
+    F::class.java, fragmentArgs, A::class.java, P::class.java, themeResId, initialState, factory
 )
 
 /**
@@ -106,13 +107,13 @@ public inline fun <reified F : Fragment, reified A : FragmentActivity> launchFra
  * simplification of the [FragmentFactory] interface for cases where only a single class
  * needs a custom constructor called.
  */
-public inline fun <reified F : Fragment, reified A : FragmentActivity> launchFragmentInContainer(
+public inline fun <reified F : Fragment, reified A : FragmentActivity, reified P : Fragment> launchNestedFragmentInContainer(
     fragmentArgs: Bundle? = null,
     @StyleRes themeResId: Int = R.style.FragmentScenarioEmptyFragmentActivityTheme,
     initialState: Lifecycle.State = Lifecycle.State.RESUMED,
     crossinline instantiate: () -> F
-): FragmentScenario2<F, A> = FragmentScenario2.launchInContainer(
-    F::class.java, fragmentArgs, A::class.java, themeResId, initialState,
+): NestedFragmentScenario2<F, A, P> = NestedFragmentScenario2.launchInContainer(
+    F::class.java, fragmentArgs, A::class.java, P::class.java, themeResId, initialState,
     object : FragmentFactory() {
         override fun instantiate(
             classLoader: ClassLoader,
@@ -130,7 +131,7 @@ public inline fun <reified F : Fragment, reified A : FragmentActivity> launchFra
  * If any exceptions are raised while running [block], they are rethrown.
  */
 @SuppressWarnings("DocumentExceptions")
-public inline fun <reified F : Fragment, A : FragmentActivity, T : Any> FragmentScenario2<F, A>.withFragment(
+public inline fun <reified F : Fragment, A : FragmentActivity, P : Fragment, T : Any> NestedFragmentScenario2<F, A, P>.withFragment(
     crossinline block: F.() -> T
 ): T {
     lateinit var value: T
@@ -163,7 +164,8 @@ public inline fun <reified F : Fragment, A : FragmentActivity, T : Any> Fragment
  *
  * @see ActivityScenario a scenario API for Activity
  */
-public class FragmentScenario2<F : Fragment, A : FragmentActivity> private constructor(
+@SuppressLint("PrivateResource")
+public class NestedFragmentScenario2<F : Fragment, A : FragmentActivity, P : Fragment> private constructor(
     @Suppress("MemberVisibilityCanBePrivate") /* synthetic access */
     internal val fragmentClass: Class<F>,
     private val activityScenario: ActivityScenario<A>
@@ -178,27 +180,37 @@ public class FragmentScenario2<F : Fragment, A : FragmentActivity> private const
      *
      * This method cannot be called from the main thread.
      */
-    public fun moveToState(newState: Lifecycle.State): FragmentScenario2<F, A> {
+    public fun moveToState(newState: Lifecycle.State): NestedFragmentScenario2<F, A, P> {
         if (newState == Lifecycle.State.DESTROYED) {
             activityScenario.onActivity { activity ->
-                val fragment = activity.supportFragmentManager
-                    .findFragmentByTag(FRAGMENT_TAG)
-                // Null means the fragment has been destroyed already.
-                if (fragment != null) {
-                    activity.supportFragmentManager.commitNow {
-                        remove(fragment)
+                val parentFragment =
+                    activity.supportFragmentManager.findFragmentByTag(PARENT_FRAGMENT_TAG);
+                if (parentFragment != null) {
+                    val fragment =
+                        parentFragment.childFragmentManager.findFragmentByTag(FRAGMENT_TAG)
+                    if (fragment != null) {
+                        parentFragment.childFragmentManager.commitNow {
+                            remove(fragment)
+                        }
                     }
                 }
             }
         } else {
             activityScenario.onActivity { activity ->
-                val fragment = requireNotNull(
-                    activity.supportFragmentManager.findFragmentByTag(FRAGMENT_TAG)
-                ) {
-                    "The fragment has been removed from the FragmentManager already."
-                }
-                activity.supportFragmentManager.commitNow {
-                    setMaxLifecycle(fragment, newState)
+                val parentFragment =
+                    activity.supportFragmentManager.findFragmentByTag(PARENT_FRAGMENT_TAG);
+                if (parentFragment != null) {
+                    val fragment =
+                        requireNotNull(
+                            parentFragment.childFragmentManager.findFragmentByTag(
+                                FRAGMENT_TAG
+                            )
+                        ) {
+                            "The fragment has been removed from the FragmentManager already."
+                        }
+                    parentFragment.childFragmentManager.commitNow {
+                        setMaxLifecycle(fragment, newState)
+                    }
                 }
             }
         }
@@ -213,7 +225,7 @@ public class FragmentScenario2<F : Fragment, A : FragmentActivity> private const
      *
      * This method cannot be called from the main thread.
      */
-    public fun recreate(): FragmentScenario2<F, A> {
+    public fun recreate(): NestedFragmentScenario2<F, A, P> {
         activityScenario.recreate()
         return this
     }
@@ -246,15 +258,19 @@ public class FragmentScenario2<F : Fragment, A : FragmentActivity> private const
      *
      * This method cannot be called from the main thread.
      */
-    public fun onFragment(action: FragmentAction<F>): FragmentScenario2<F, A> {
+    public fun onFragment(action: FragmentAction<F>): NestedFragmentScenario2<F, A, P> {
         activityScenario.onActivity { activity ->
-            val fragment = requireNotNull(
-                activity.supportFragmentManager.findFragmentByTag(FRAGMENT_TAG)
-            ) {
-                "The fragment has been removed from the FragmentManager already."
+            val parentFragment =
+                activity.supportFragmentManager.findFragmentByTag(PARENT_FRAGMENT_TAG);
+            if (parentFragment != null) {
+                val fragment = requireNotNull(
+                    parentFragment.childFragmentManager.findFragmentByTag(FRAGMENT_TAG)
+                ) {
+                    "The fragment has been removed from the FragmentManager already."
+                }
+                check(fragmentClass.isInstance(fragment))
+                action.perform(requireNotNull(fragmentClass.cast(fragment)))
             }
-            check(fragmentClass.isInstance(fragment))
-            action.perform(requireNotNull(fragmentClass.cast(fragment)))
         }
         return this
     }
@@ -268,7 +284,8 @@ public class FragmentScenario2<F : Fragment, A : FragmentActivity> private const
     }
 
     public companion object {
-        private const val FRAGMENT_TAG = "FragmentScenario2_Fragment_Tag"
+        private const val PARENT_FRAGMENT_TAG = "NestedFragmentScenario2_ParentFragment_Tag"
+        private const val FRAGMENT_TAG = "NestedFragmentScenario2_Fragment_Tag"
 
         /**
          * Launches a Fragment with given arguments hosted by an empty [FragmentActivity] using
@@ -282,15 +299,17 @@ public class FragmentScenario2<F : Fragment, A : FragmentActivity> private const
          * @param factory a fragment factory to use or null to use default factory
          */
         @JvmStatic
-        public fun <F : Fragment, A : FragmentActivity> launch(
+        public fun <F : Fragment, A : FragmentActivity, P : Fragment> launch(
             fragmentClass: Class<F>,
             fragmentArgs: Bundle?,
             activityClass: Class<A>,
+            parentFragmentClass: Class<P>,
             factory: FragmentFactory?
-        ): FragmentScenario2<F, A> = launch(
+        ): NestedFragmentScenario2<F, A, P> = launch(
             fragmentClass,
             fragmentArgs,
             activityClass,
+            parentFragmentClass,
             R.style.FragmentScenarioEmptyFragmentActivityTheme,
             Lifecycle.State.RESUMED,
             factory
@@ -309,16 +328,18 @@ public class FragmentScenario2<F : Fragment, A : FragmentActivity> private const
          * @param factory a fragment factory to use or null to use default factory
          */
         @JvmStatic
-        public fun <F : Fragment, A : FragmentActivity> launch(
+        public fun <F : Fragment, A : FragmentActivity, P : Fragment> launch(
             fragmentClass: Class<F>,
             fragmentArgs: Bundle?,
             activityClass: Class<A>,
+            parentFragmentClass: Class<P>,
             @StyleRes themeResId: Int,
             factory: FragmentFactory?
-        ): FragmentScenario2<F, A> = launch(
+        ): NestedFragmentScenario2<F, A, P> = launch(
             fragmentClass,
             fragmentArgs,
             activityClass,
+            parentFragmentClass,
             themeResId,
             Lifecycle.State.RESUMED,
             factory
@@ -340,21 +361,24 @@ public class FragmentScenario2<F : Fragment, A : FragmentActivity> private const
          */
         @JvmOverloads
         @JvmStatic
-        public fun <F : Fragment, A : FragmentActivity> launch(
+        public fun <F : Fragment, A : FragmentActivity, P : Fragment> launch(
             fragmentClass: Class<F>,
             fragmentArgs: Bundle? = null,
             activityClass: Class<A>,
+            parentFragmentClass: Class<P>,
             @StyleRes themeResId: Int = R.style.FragmentScenarioEmptyFragmentActivityTheme,
             initialState: Lifecycle.State = Lifecycle.State.RESUMED,
             factory: FragmentFactory? = null
-        ): FragmentScenario2<F, A> = internalLaunch(
+        ): NestedFragmentScenario2<F, A, P> = internalLaunch(
             fragmentClass,
             fragmentArgs,
             activityClass,
+            parentFragmentClass,
             themeResId,
             initialState,
             factory,
-            0 /*containerViewId=*/
+            0 /*containerViewId=*/,
+            0
         )
 
         /**
@@ -369,18 +393,22 @@ public class FragmentScenario2<F : Fragment, A : FragmentActivity> private const
          * @param factory a fragment factory to use or null to use default factory
          */
         @JvmStatic
-        public fun <F : Fragment, A : FragmentActivity> launchInContainer(
+        public fun <F : Fragment, A : FragmentActivity, P : Fragment> launchInContainer(
             fragmentClass: Class<F>,
             fragmentArgs: Bundle?,
             activityClass: Class<A>,
-            factory: FragmentFactory?
-        ): FragmentScenario2<F, A> = launchInContainer(
+            parentFragmentClass: Class<P>,
+            factory: FragmentFactory?,
+            childContainerViewId: Int
+        ): NestedFragmentScenario2<F, A, P> = launchInContainer(
             fragmentClass,
             fragmentArgs,
             activityClass,
+            parentFragmentClass,
             R.style.FragmentScenarioEmptyFragmentActivityTheme,
             Lifecycle.State.RESUMED,
-            factory
+            factory,
+            childContainerViewId
         )
 
         /**
@@ -396,19 +424,23 @@ public class FragmentScenario2<F : Fragment, A : FragmentActivity> private const
          * @param factory a fragment factory to use or null to use default factory
          */
         @JvmStatic
-        public fun <F : Fragment, A : FragmentActivity> launchInContainer(
+        public fun <F : Fragment, A : FragmentActivity, P : Fragment> launchInContainer(
             fragmentClass: Class<F>,
             fragmentArgs: Bundle?,
             activityClass: Class<A>,
+            parentFragmentClass: Class<P>,
             @StyleRes themeResId: Int,
-            factory: FragmentFactory?
-        ): FragmentScenario2<F, A> = launchInContainer(
+            factory: FragmentFactory?,
+            childContainerViewId: Int
+        ): NestedFragmentScenario2<F, A, P> = launchInContainer(
             fragmentClass,
             fragmentArgs,
             activityClass,
+            parentFragmentClass,
             themeResId,
             Lifecycle.State.RESUMED,
-            factory
+            factory,
+            childContainerViewId
         )
 
         /**
@@ -427,33 +459,39 @@ public class FragmentScenario2<F : Fragment, A : FragmentActivity> private const
          */
         @JvmOverloads
         @JvmStatic
-        public fun <F : Fragment, A : FragmentActivity> launchInContainer(
+        public fun <F : Fragment, A : FragmentActivity, P : Fragment> launchInContainer(
             fragmentClass: Class<F>,
             fragmentArgs: Bundle? = null,
             activityClass: Class<A>,
+            parentFragmentClass: Class<P>,
             @StyleRes themeResId: Int = R.style.FragmentScenarioEmptyFragmentActivityTheme,
             initialState: Lifecycle.State = Lifecycle.State.RESUMED,
-            factory: FragmentFactory? = null
-        ): FragmentScenario2<F, A> = internalLaunch(
+            factory: FragmentFactory? = null,
+            childContainerViewId: Int = 0
+        ): NestedFragmentScenario2<F, A, P> = internalLaunch(
             fragmentClass,
             fragmentArgs,
             activityClass,
+            parentFragmentClass,
             themeResId,
             initialState,
             factory,
-            android.R.id.content
+            android.R.id.content,
+            childContainerViewId
         )
 
         @SuppressLint("RestrictedApi")
-        internal fun <F : Fragment, A : FragmentActivity> internalLaunch(
+        internal fun <F : Fragment, A : FragmentActivity, P : Fragment> internalLaunch(
             fragmentClass: Class<F>,
             fragmentArgs: Bundle?,
             activityClass: Class<A>,
+            parentFragmentClass: Class<P>,
             @StyleRes themeResId: Int,
             initialState: Lifecycle.State,
             factory: FragmentFactory?,
-            @IdRes containerViewId: Int
-        ): FragmentScenario2<F, A> {
+            @IdRes containerViewId: Int,
+            @IdRes childContainerViewId: Int
+        ): NestedFragmentScenario2<F, A, P> {
             require(initialState != Lifecycle.State.DESTROYED) {
                 "Cannot set initial Lifecycle state to $initialState for FragmentScenario2"
             }
@@ -463,22 +501,34 @@ public class FragmentScenario2<F : Fragment, A : FragmentActivity> private const
             )
             val startActivityIntent = Intent.makeMainActivity(componentName)
                 .putExtra(EmptyFragmentActivity.THEME_EXTRAS_BUNDLE_KEY, themeResId)
-            val scenario = FragmentScenario2<F, A>(
+            val activityScenario = ActivityScenario.launch<A>(startActivityIntent)
+            val scenario = NestedFragmentScenario2<F, A, P>(
                 fragmentClass,
-                ActivityScenario.launch(
-                    startActivityIntent
-                )
+                activityScenario
             )
             scenario.activityScenario.onActivity { activity ->
                 if (factory != null) {
                     FragmentFactoryHolderViewModel.getInstance(activity).fragmentFactory = factory
                     activity.supportFragmentManager.fragmentFactory = factory
                 }
-                val fragment = activity.supportFragmentManager.fragmentFactory
+                val parentFragment = activity.supportFragmentManager.fragmentFactory
+                    .instantiate(
+                        requireNotNull(parentFragmentClass.classLoader),
+                        parentFragmentClass.name
+                    )
+
+                activity.supportFragmentManager.commitNow {
+                    add(containerViewId, parentFragment, PARENT_FRAGMENT_TAG)
+                    setMaxLifecycle(parentFragment, Lifecycle.State.STARTED)
+                }
+                if (factory != null) {
+                    parentFragment.childFragmentManager.fragmentFactory = factory
+                }
+                val fragment = parentFragment.childFragmentManager.fragmentFactory
                     .instantiate(requireNotNull(fragmentClass.classLoader), fragmentClass.name)
                 fragment.arguments = fragmentArgs
-                activity.supportFragmentManager.commitNow {
-                    add(containerViewId, fragment, FRAGMENT_TAG)
+                parentFragment.childFragmentManager.commitNow {
+                    add(childContainerViewId, fragment, FRAGMENT_TAG)
                     setMaxLifecycle(fragment, initialState)
                 }
             }
